@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
-import type { MapMouseEvent, Map } from "maplibre-gl";
+import type { MapMouseEvent, Map, StyleSpecification } from "maplibre-gl";
 import type { FeatureCollection, Polygon } from "geojson";
 import "./App.css";
 
@@ -22,13 +22,59 @@ const defaultPoly: GjGeometry = {
 
 const emptyFc: Fc = { type: "FeatureCollection", features: [] };
 
+/** Esri World Imagery (no API key; subject to Esri / ArcGIS terms of use). */
+const SATELLITE_STYLE: StyleSpecification = {
+  version: 8,
+  name: "Esri World Imagery",
+  sources: {
+    esri: {
+      type: "raster",
+      tileSize: 256,
+      tiles: [
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      ],
+      attribution:
+        "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    },
+  },
+  layers: [
+    {
+      id: "esri",
+      type: "raster",
+      source: "esri",
+      minzoom: 0,
+      maxzoom: 22,
+    },
+  ],
+};
+
 type Health = { gee: boolean; gee_message: string };
+type PeriodBlock = {
+  start?: string;
+  end?: string;
+  n_months?: number;
+  label?: string;
+};
+type PhaseBExplanation = {
+  summary?: string;
+  error?: string;
+  periods?: { baseline?: PeriodBlock; recent?: PeriodBlock } | null;
+  thumbnails?: {
+    error?: string;
+    disabled?: string;
+    caption_baseline?: string;
+    caption_recent?: string;
+    baseline_s2_rgb_url?: string | null;
+    recent_s2_rgb_url?: string | null;
+  };
+};
 type Analysis = {
   ok: boolean;
   gee?: boolean;
   error?: string;
   metadata?: Record<string, unknown>;
   features: Fc;
+  explanation?: PhaseBExplanation;
 };
 
 export function App() {
@@ -45,6 +91,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState<Analysis | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [includePreviews, setIncludePreviews] = useState(true);
 
   const startDraw = useCallback(() => {
     drawRing.current = [];
@@ -72,12 +119,15 @@ export function App() {
     }
     const m = new maplibregl.Map({
       container: el.current,
-      style: "https://demotiles.maplibre.org/style.json",
+      style: SATELLITE_STYLE,
       center: [105.82, 9.55],
       zoom: 9,
     });
     map.current = m;
     m.addControl(new maplibregl.NavigationControl());
+    m.addControl(
+      new maplibregl.AttributionControl({ compact: true }),
+    );
     m.on("load", () => {
       m.addSource("aoi", {
         type: "geojson",
@@ -208,7 +258,6 @@ export function App() {
     setLoading(true);
     setRes(null);
     try {
-      const g: Feature = { type: "Feature", properties: {}, geometry: aoi };
       const r = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -218,6 +267,7 @@ export function App() {
           end_date: `${end}T00:00:00Z`,
           include_s1: includeS1,
           z_threshold: z,
+          include_explanation: includePreviews,
         }),
       });
       const j = (await r.json()) as Analysis;
@@ -271,6 +321,16 @@ export function App() {
               Fuse Sentinel-1 (VV) with S2
             </label>
           </div>
+          <div className="field" style={{ alignItems: "flex-start" }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={includePreviews}
+                onChange={(e) => setIncludePreviews(e.target.checked)}
+              />
+              Phase B: S2 before/after previews (slower)
+            </label>
+          </div>
         </div>
         <div>
           <button className="secondary" type="button" onClick={startDraw} disabled={drawMode}>
@@ -287,14 +347,74 @@ export function App() {
           </button>
         </div>
         {health && <div className="field"><span>API: {health.gee ? "GEE" : "mock/offline"} — {health.gee_message}</span></div>}
-        {res?.metadata && <div className="result-meta">Meta: {JSON.stringify(res.metadata)}</div>}
+        {res?.metadata && (
+          <div className="result-meta" title={JSON.stringify(res.metadata, null, 0)}>
+            Area {String(res.metadata.area_km2 ?? "—")} km² · {String(res.metadata.months ?? "—")} months
+            (baseline {String(res.metadata.baseline_months ?? "—")} / recent {String(res.metadata.recent_months ?? "—")})
+            · |Z| &ge; {String(res.metadata.z_threshold)} ·
+            S1+S2 {res.metadata.fused_s1_s2 ? "on" : "S2 only"}
+          </div>
+        )}
       </div>
       {err && <div className="error toolbar">{err}</div>}
-      <div className="maprow">
-        {drawMode && <div className="drawing-help">Clicks: add vertex. Then “Finish polygon” (or cancel).</div>}
-        <div id="map" ref={el} />
+      <div className="map-and-side">
+        <div className="maprow">
+          {drawMode && <div className="drawing-help">Clicks: add vertex. Then “Finish polygon” (or cancel).</div>}
+          <div id="map" ref={el} />
+        </div>
+        {res?.ok && res.explanation && (
+          <aside className="explain-aside">
+            <h2>What this run means (Phase B)</h2>
+            {res.explanation.summary && <p className="explain-text">{res.explanation.summary}</p>}
+            {res.explanation.error && <p className="error">Explanation: {res.explanation.error}</p>}
+            {res.explanation.periods?.baseline && (
+              <div className="period-block">
+                <strong>Baseline period</strong>
+                <p>
+                  {res.explanation.periods.baseline.start} → {res.explanation.periods.baseline.end}
+                </p>
+                <p className="sub">{res.explanation.periods.baseline.label}</p>
+              </div>
+            )}
+            {res.explanation.periods?.recent && (
+              <div className="period-block">
+                <strong>Recent period (vs baseline)</strong>
+                <p>
+                  {res.explanation.periods.recent.start} → {res.explanation.periods.recent.end}
+                </p>
+                <p className="sub">{res.explanation.periods.recent.label}</p>
+              </div>
+            )}
+            {res.explanation.thumbnails && (
+              <div className="thumbs">
+                {res.explanation.thumbnails.error && <p className="error">{res.explanation.thumbnails.error}</p>}
+                {res.explanation.thumbnails.disabled && <p className="hint">{res.explanation.thumbnails.disabled}</p>}
+                {res.explanation.thumbnails.baseline_s2_rgb_url && (
+                  <figure>
+                    <figcaption>{res.explanation.thumbnails.caption_baseline}</figcaption>
+                    <img
+                      src={res.explanation.thumbnails.baseline_s2_rgb_url}
+                      alt="Baseline S2"
+                      className="thumb"
+                    />
+                  </figure>
+                )}
+                {res.explanation.thumbnails.recent_s2_rgb_url && (
+                  <figure>
+                    <figcaption>{res.explanation.thumbnails.caption_recent}</figcaption>
+                    <img
+                      src={res.explanation.thumbnails.recent_s2_rgb_url}
+                      alt="Recent S2"
+                      className="thumb"
+                    />
+                  </figure>
+                )}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
-      <div className="legend">Red fill: pixels where |Z| of recent vs baseline monthly stack exceeds your threshold. Baseline = first ~65% of months; “recent” = rest.</div>
+      <div className="legend">Red fill: |Z| ≥ your threshold. Baseline ≈ first 65% of months in the range; the rest = “recent.” Thumbnails: cloud-masked S2 true-color <em>medians</em> over each window (not a single date).</div>
     </div>
   );
 }

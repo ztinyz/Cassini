@@ -83,12 +83,89 @@ button.secondary {
   color: #f85149;
   white-space: pre-wrap;
 }
+.map-and-side {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: row;
+  border-top: 1px solid #30363d;
+}
+
 .maprow {
   flex: 1;
   display: flex;
   min-height: 0;
+  min-width: 0;
   flex-direction: column;
   position: relative;
+}
+
+.explain-aside {
+  width: 22rem;
+  max-width: 40vw;
+  padding: 0.65rem 0.75rem;
+  background: #161b22;
+  border-left: 1px solid #30363d;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  color: #c9d1d9;
+}
+
+.explain-aside h2 {
+  font-size: 0.8rem;
+  color: #58a6ff;
+  margin: 0 0 0.4rem 0;
+}
+
+.explain-text {
+  margin: 0 0 0.5rem 0;
+  line-height: 1.4;
+}
+
+.period-block {
+  margin: 0.4rem 0 0.6rem 0;
+}
+
+.period-block p {
+  margin: 0.1rem 0;
+}
+
+.sub {
+  color: #8b949e;
+  font-size: 0.75rem;
+}
+
+.explain-aside .thumbs {
+  margin-top: 0.4rem;
+}
+
+.explain-aside .thumb {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  margin: 0.2rem 0 0.5rem 0;
+}
+
+.explain-aside figcaption {
+  color: #8b949e;
+  font-size: 0.72rem;
+  margin: 0.2rem 0 0.1rem 0;
+}
+
+@media (max-width: 52rem) {
+  .map-and-side {
+    flex-direction: column;
+  }
+  .explain-aside {
+    width: 100%;
+    max-width: none;
+    border-left: none;
+    border-top: 1px solid #30363d;
+    max-height: 50vh;
+  }
 }
 
 .drawing-help {

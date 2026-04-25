@@ -48,6 +48,10 @@ class AnalyzeRequest(BaseModel):
     s2_fusion_weight: float = 0.55
     s1_fusion_weight: float = 0.45
     max_area_km2: float = 2000.0
+    include_explanation: bool = Field(
+        default=True,
+        description="Phase B: period labels + S2 baseline/recent getThumbURL previews (extra GEE work).",
+    )
 
 
 class HealthResponse(BaseModel):
@@ -95,6 +99,7 @@ def analyze(
         body.end_date,
         cfg=cfg,
         include_s1=body.include_s1,
+        include_explanation=body.include_explanation,
     )
     return JSONResponse(content=out)
 

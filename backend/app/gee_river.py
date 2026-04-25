@@ -217,12 +217,136 @@ def _geo_to_ee(geometry_geojson: dict) -> "ee.Geometry":
     return ee.Geometry(geometry_geojson)
 
 
+def _s2_to_rgb3(image: "ee.Image") -> "ee.Image":
+    """3-band S2 (B4, B3, B2) only, cloud-masked — homogeneous for median()."""
+    qa = image.select("QA60")
+    m = qa.bitwiseAnd(1 << 10).eq(0).And(qa.bitwiseAnd(1 << 11).eq(0))
+    img = image.updateMask(m).divide(10000.0)
+    return img.select(["B4", "B3", "B2"])
+
+
+def _s2_median_true_color(
+    geom: "ee.Geometry", t_start: "ee.ComputedObject", t_end: "ee.ComputedObject"
+) -> "ee.Image" | None:
+    """Median RGB composite for [t_start, t_end)."""
+    assert ee is not None
+    c = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterBounds(geom)
+        .filterDate(t_start, t_end)
+    )
+    try:
+        m = c.map(_s2_to_rgb3).median()
+        return m
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _period_labels_iso(
+    start_iso: str, n_months: int, n_b: int, n_r: int
+) -> dict[str, Any]:
+    t0 = parser.isoparse(start_iso)
+    t0d = t0.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    t_b_end = t0d + relativedelta(months=n_b)  # start of “recent” (exclusive end of baseline)
+    t_m_end = t0d + relativedelta(months=n_months)
+    return {
+        "baseline": {
+            "start": t0d.date().isoformat(),
+            "end": (t_b_end - relativedelta(days=1)).date().isoformat(),
+            "n_months": n_b,
+            "label": f"First {n_b} monthly composites from range start (mean/std for |Z|).",
+        },
+        "recent": {
+            "start": t_b_end.date().isoformat(),
+            "end": (t_m_end - relativedelta(days=1)).date().isoformat()
+            if n_months
+            else None,
+            "n_months": n_r,
+            "label": f"Last {n_r} months vs baseline — higher |MNDWI/SAR Z| = stronger departure.",
+        },
+    }
+
+
+def _gee_explanation(
+    geometry_geojson: dict,
+    start: str,
+    n_months: int,
+    n_b: int,
+    n_r: int,
+    fused: bool,
+    cfg: AnalyzeConfig,
+) -> dict[str, Any]:
+    assert ee is not None
+    geom = _geo_to_ee(geometry_geojson)
+    t0 = ee.Date(start)
+    t_base_end = t0.advance(n_b, "month")
+    t_rec_end = t0.advance(n_months, "month")
+    out: dict[str, Any] = {
+        "summary": (
+            f"Scoring: per-pixel |Z| from S2 MNDWI monthly medians"
+            f"{' fused with S1 VV dB' if fused else ''}. "
+            f"Baseline = first {n_b} months; recent = {n_r} months. "
+            f"Vector mask where |Z| >= {cfg.z_threshold} (screening, not a legal test)."
+        ),
+        "periods": _period_labels_iso(start, n_months, n_b, n_r),
+    }
+    if _geom_area_km2(geom) > 2500.0:
+        out["thumbnails"] = {
+            "error": "Preview skipped (use AOI under ~2500 km² for S2 getThumbURL).",
+        }
+        return out
+    vis = {
+        "bands": ["B4", "B3", "B2"],
+        "min": 0.0,
+        "max": 0.35,
+        "dimensions": 480,
+        "region": geom,
+        "format": "png",
+    }
+    try:
+        b_img = _s2_median_true_color(geom, t0, t_base_end)
+        r_img = _s2_median_true_color(geom, t_base_end, t_rec_end)
+        b_url: str | None
+        r_url: str | None
+        b_url = b_img.getThumbURL(vis) if b_img is not None else None
+        r_url = r_img.getThumbURL(vis) if r_img is not None else None
+        if not b_url and not r_url:
+            out["thumbnails"] = {
+                "error": "No cloud-free S2 in one or both windows; try a wider area or other dates."
+            }
+        else:
+            out["thumbnails"] = {
+                "caption_baseline": "S2 true-color median (cloud-masked) — baseline window",
+                "caption_recent": "S2 true-color median (cloud-masked) — recent window",
+                "baseline_s2_rgb_url": b_url,
+                "recent_s2_rgb_url": r_url,
+            }
+    except Exception as ex:  # noqa: BLE001
+        out["thumbnails"] = {"error": str(ex)}
+    return out
+
+
+def _mock_explanation() -> dict[str, Any]:
+    return {
+        "summary": "Mock: connect GEE for S2 before/after previews and full screening.",
+        "periods": None,
+        "thumbnails": {
+            "disabled": "GEE not initialised; previews unavailable in mock mode.",
+        },
+    }
+
+
 def _geom_area_km2(geom) -> float:
     return float(geom.area(maxError=1).getInfo()) / 1e6
 
 
 def _analyze_gee(
-    geometry_geojson: dict, start: str, end: str, cfg: AnalyzeConfig, include_s1: bool
+    geometry_geojson: dict,
+    start: str,
+    end: str,
+    cfg: AnalyzeConfig,
+    include_s1: bool,
+    include_explanation: bool = False,
 ) -> dict[str, Any]:
     assert ee is not None
     geom = _geo_to_ee(geometry_geojson)
@@ -316,7 +440,7 @@ def _analyze_gee(
             }
         )
 
-    return {
+    out: dict[str, Any] = {
         "ok": True,
         "gee": True,
         "metadata": {
@@ -329,9 +453,22 @@ def _analyze_gee(
         },
         "features": {"type": "FeatureCollection", "features": feats},
     }
+    if include_explanation:
+        try:
+            out["explanation"] = _gee_explanation(
+                geometry_geojson, start, n, n_b, n_rec, fused, cfg
+            )
+        except Exception as ex:  # noqa: BLE001
+            out["explanation"] = {
+                "summary": "Could not build Phase B explanation (thumbnails/periods).",
+                "error": str(ex),
+            }
+    return out
 
 
-def _mock_analyze(geometry_geojson: dict, start: str, end: str) -> dict[str, Any]:
+def _mock_analyze(
+    geometry_geojson: dict, start: str, end: str, include_explanation: bool
+) -> dict[str, Any]:
     g = None
     if shape is not None and box is not None and Point is not None and mapping is not None:  # noqa: E501
         try:
@@ -375,7 +512,7 @@ def _mock_analyze(geometry_geojson: dict, start: str, end: str) -> dict[str, Any
                 },
             }
         )
-    return {
+    m: dict[str, Any] = {
         "ok": True,
         "gee": False,
         "metadata": {
@@ -383,6 +520,9 @@ def _mock_analyze(geometry_geojson: dict, start: str, end: str) -> dict[str, Any
         },
         "features": {"type": "FeatureCollection", "features": feats},
     }
+    if include_explanation:
+        m["explanation"] = _mock_explanation()
+    return m
 
 
 def analyze_aoi(
@@ -391,8 +531,16 @@ def analyze_aoi(
     end_date: str,
     cfg: Optional[AnalyzeConfig] = None,
     include_s1: bool = True,
+    include_explanation: bool = True,
 ) -> dict[str, Any]:
     cfg = cfg or AnalyzeConfig()
     if gee_is_ready() and ee is not None:
-        return _analyze_gee(geometry_geojson, start_date, end_date, cfg, include_s1)
-    return _mock_analyze(geometry_geojson, start_date, end_date)
+        return _analyze_gee(
+            geometry_geojson,
+            start_date,
+            end_date,
+            cfg,
+            include_s1,
+            include_explanation=include_explanation,
+        )
+    return _mock_analyze(geometry_geojson, start_date, end_date, include_explanation)
