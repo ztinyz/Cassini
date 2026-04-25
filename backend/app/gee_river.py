@@ -4,11 +4,16 @@ baseline) per pixel, vectorize |z| >= z_threshold. Mock if GEE unavailable.
 """
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import numpy as np
 from dateutil import parser
@@ -267,6 +272,80 @@ def _period_labels_iso(
     }
 
 
+def _thumb_get_url_to_data_url(url: str | None) -> str | None:
+    """Fetch GEE getThumbURL PNG and return a data URL (retries, long timeout).
+
+    Earth Engine ``getThumbURL`` encodes a large graph; baseline previews are
+    slower to render and the HTTP read can take minutes or hit ECONNRESET.
+    Retries and a long per-attempt timeout help. Browsers also choke on the raw
+    URL length, so we return inline data here.
+    """
+    if not url or not str(url).strip().startswith("http"):
+        return None
+    p = urlparse(str(url).strip())
+    if p.scheme not in ("http", "https") or p.hostname is None:
+        return None
+    h = p.hostname.lower()
+    if "google" not in h and "earthengine" not in h:
+        return None
+    u = str(url).strip()
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request(  # noqa: S310 — whitelisted GEE image fetch
+                u,
+                method="GET",
+                headers={"User-Agent": "HackSateliti-GEE-Thumb/1.0"},
+            )
+            # Baseline composite can be slow; allow several minutes to read body
+            with urllib.request.urlopen(req, timeout=420) as resp:
+                data = resp.read()
+            if not data:
+                return None
+            b64 = base64.b64encode(data).decode("ascii")
+            return f"data:image/png;base64,{b64}"
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(1.0 * (2**attempt))
+                continue
+            if attempt < 3:
+                time.sleep(0.5 * (2**attempt))
+                continue
+            return None
+        except (OSError, urllib.error.URLError, ValueError, TypeError):
+            if attempt < 3:
+                time.sleep(1.0 * (2**attempt))
+                continue
+            return None
+    return None
+
+
+def _s2_rgb_median_to_png_data_url(
+    img: "ee.Image" | None, geom: "ee.Geometry"
+) -> tuple[str | None, str | None]:
+    """Return (data_url, last_gee_thumb_url_tried) using 480/360/256px fallbacks."""
+    if img is None:
+        return None, None
+    last_u: str | None = None
+    base: dict[str, Any] = {
+        "bands": ["B4", "B3", "B2"],
+        "min": 0.0,
+        "max": 0.35,
+        "format": "png",
+        "region": geom,
+    }
+    for dim in (480, 360, 256):
+        vis = {**base, "dimensions": dim}
+        try:
+            u = img.getThumbURL(vis)
+            last_u = u
+        except Exception:  # noqa: BLE001
+            continue
+        data = _thumb_get_url_to_data_url(u)
+        if data:
+            return data, u
+    return None, last_u
+
+
 def _gee_explanation(
     geometry_geojson: dict,
     start: str,
@@ -295,32 +374,39 @@ def _gee_explanation(
             "error": "Preview skipped (use AOI under ~2500 km² for S2 getThumbURL).",
         }
         return out
-    vis = {
-        "bands": ["B4", "B3", "B2"],
-        "min": 0.0,
-        "max": 0.35,
-        "dimensions": 480,
-        "region": geom,
-        "format": "png",
-    }
     try:
         b_img = _s2_median_true_color(geom, t0, t_base_end)
         r_img = _s2_median_true_color(geom, t_base_end, t_rec_end)
-        b_url: str | None
-        r_url: str | None
-        b_url = b_img.getThumbURL(vis) if b_img is not None else None
-        r_url = r_img.getThumbURL(vis) if r_img is not None else None
-        if not b_url and not r_url:
+        b_data, b_url = _s2_rgb_median_to_png_data_url(b_img, geom)
+        r_data, r_url = _s2_rgb_median_to_png_data_url(r_img, geom)
+        if not b_url and not r_url and b_img is None and r_img is None:
             out["thumbnails"] = {
-                "error": "No cloud-free S2 in one or both windows; try a wider area or other dates."
+                "error": "No S2 stack in one or both windows; try a wider area or other dates."
+            }
+        elif not b_data and not r_data and not b_url and not r_url:
+            out["thumbnails"] = {
+                "error": "Could not build S2 preview URLs; try a smaller date range or AOI."
             }
         else:
-            out["thumbnails"] = {
+            t: dict[str, Any] = {
                 "caption_baseline": "S2 true-color median (cloud-masked) — baseline window",
                 "caption_recent": "S2 true-color median (cloud-masked) — recent window",
+                "baseline_s2_rgb_data_url": b_data,
+                "recent_s2_rgb_data_url": r_data,
                 "baseline_s2_rgb_url": b_url,
                 "recent_s2_rgb_url": r_url,
             }
+            if b_url and not b_data:
+                t["warning_baseline"] = (
+                    "Baseline preview download failed after retries and smaller-size fallbacks. "
+                    "GEE is slower for the long baseline; try again in a few minutes, "
+                    "use a smaller AOI, or run without Phase B previews once."
+                )
+            if r_url and not r_data:
+                t["warning_recent"] = (
+                    "Recent preview download failed after retries; try again or check connectivity."
+                )
+            out["thumbnails"] = t
     except Exception as ex:  # noqa: BLE001
         out["thumbnails"] = {"error": str(ex)}
     return out

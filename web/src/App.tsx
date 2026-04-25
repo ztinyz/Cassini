@@ -64,8 +64,13 @@ type PhaseBExplanation = {
     disabled?: string;
     caption_baseline?: string;
     caption_recent?: string;
+    /** Server-fetched PNG; prefer over *_url to avoid GEE long-URL / browser limits. */
+    baseline_s2_rgb_data_url?: string | null;
+    recent_s2_rgb_data_url?: string | null;
     baseline_s2_rgb_url?: string | null;
     recent_s2_rgb_url?: string | null;
+    warning_baseline?: string;
+    warning_recent?: string;
   };
 };
 type Analysis = {
@@ -76,6 +81,14 @@ type Analysis = {
   features: Fc;
   explanation?: PhaseBExplanation;
 };
+
+function s2PreviewSrc(
+  dataUrl: string | null | undefined,
+  geeUrl: string | null | undefined,
+): string | undefined {
+  const s = (dataUrl && dataUrl.length > 0 ? dataUrl : geeUrl) || "";
+  return s.length > 0 ? s : undefined;
+}
 
 export function App() {
   const el = useRef<HTMLDivElement>(null);
@@ -92,6 +105,29 @@ export function App() {
   const [res, setRes] = useState<Analysis | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [includePreviews, setIncludePreviews] = useState(true);
+  const [imageLightbox, setImageLightbox] = useState<{
+    url: string;
+    alt: string;
+    caption?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!imageLightbox) {
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setImageLightbox(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [imageLightbox]);
 
   const startDraw = useCallback(() => {
     drawRing.current = [];
@@ -385,36 +421,99 @@ export function App() {
                 <p className="sub">{res.explanation.periods.recent.label}</p>
               </div>
             )}
-            {res.explanation.thumbnails && (
+            {res.explanation.thumbnails && (() => {
+              const t = res.explanation.thumbnails;
+              const bSrc = s2PreviewSrc(t.baseline_s2_rgb_data_url, t.baseline_s2_rgb_url);
+              const rSrc = s2PreviewSrc(t.recent_s2_rgb_data_url, t.recent_s2_rgb_url);
+              return (
               <div className="thumbs">
-                {res.explanation.thumbnails.error && <p className="error">{res.explanation.thumbnails.error}</p>}
-                {res.explanation.thumbnails.disabled && <p className="hint">{res.explanation.thumbnails.disabled}</p>}
-                {res.explanation.thumbnails.baseline_s2_rgb_url && (
+                {t.error && <p className="error">{t.error}</p>}
+                {t.disabled && <p className="hint">{t.disabled}</p>}
+                {t.warning_baseline && <p className="error">{t.warning_baseline}</p>}
+                {t.warning_recent && <p className="error">{t.warning_recent}</p>}
+                {bSrc && (
                   <figure>
-                    <figcaption>{res.explanation.thumbnails.caption_baseline}</figcaption>
-                    <img
-                      src={res.explanation.thumbnails.baseline_s2_rgb_url}
-                      alt="Baseline S2"
-                      className="thumb"
-                    />
+                    <figcaption>{t.caption_baseline}</figcaption>
+                    <button
+                      type="button"
+                      className="thumb-button"
+                      title="Click to enlarge"
+                      onClick={() =>
+                        setImageLightbox({
+                          url: bSrc,
+                          alt: "Baseline S2 median composite",
+                          caption: t.caption_baseline,
+                        })
+                      }
+                    >
+                      <img
+                        src={bSrc}
+                        alt="Baseline S2"
+                        className="thumb"
+                        loading="lazy"
+                        draggable={false}
+                      />
+                    </button>
                   </figure>
                 )}
-                {res.explanation.thumbnails.recent_s2_rgb_url && (
+                {rSrc && (
                   <figure>
-                    <figcaption>{res.explanation.thumbnails.caption_recent}</figcaption>
-                    <img
-                      src={res.explanation.thumbnails.recent_s2_rgb_url}
-                      alt="Recent S2"
-                      className="thumb"
-                    />
+                    <figcaption>{t.caption_recent}</figcaption>
+                    <button
+                      type="button"
+                      className="thumb-button"
+                      title="Click to enlarge"
+                      onClick={() =>
+                        setImageLightbox({
+                          url: rSrc,
+                          alt: "Recent S2 median composite",
+                          caption: t.caption_recent,
+                        })
+                      }
+                    >
+                      <img
+                        src={rSrc}
+                        alt="Recent S2"
+                        className="thumb"
+                        loading="lazy"
+                        draggable={false}
+                      />
+                    </button>
                   </figure>
                 )}
               </div>
-            )}
+            ); })()}
           </aside>
         )}
       </div>
-      <div className="legend">Red fill: |Z| ≥ your threshold. Baseline ≈ first 65% of months in the range; the rest = “recent.” Thumbnails: cloud-masked S2 true-color <em>medians</em> over each window (not a single date).</div>
+      <div className="legend">Red fill: |Z| ≥ your threshold. Baseline ≈ first 65% of months in the range; the rest = “recent.” Thumbnails: cloud-masked S2 true-color <em>medians</em> over each window (not a single date). Click a preview to enlarge.</div>
+      {imageLightbox && (
+        <div
+          className="image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Enlarged preview"
+        >
+          <div
+            className="image-lightbox-backdrop"
+            onClick={() => setImageLightbox(null)}
+            role="presentation"
+          />
+          <div className="image-lightbox-content">
+            {imageLightbox.caption && (
+              <p className="image-lightbox-caption">{imageLightbox.caption}</p>
+            )}
+            <img
+              src={imageLightbox.url}
+              alt={imageLightbox.alt}
+              className="image-lightbox-img"
+            />
+            <button type="button" className="image-lightbox-close" onClick={() => setImageLightbox(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

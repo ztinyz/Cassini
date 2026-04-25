@@ -25,7 +25,7 @@ From `web/`: `npm install` then `npm run dev` — the dev server proxies `/api` 
 
 Open the printed URL, adjust dates (need several months, default range is ~6 years), optionally toggle Sentinel-1 fusion, then **Run screening**.
 
-**Phase B (explanation):** with “Phase B: S2 before/after previews” enabled (default), `POST /api/analyze` also returns `explanation`: human-readable baseline/recent date ranges, a short summary of the Z-score logic, and two **S2 true-color median** thumbnail URLs (GEE `getThumbURL`) for the baseline and recent windows. Uncheck to skip extra GEE work. Previews are skipped for AOIs over ~2500 km².
+**Phase B (explanation):** with “Phase B: S2 before/after previews” enabled (default), `POST /api/analyze` also returns `explanation`: human-readable baseline/recent date ranges, a short summary of the Z-score logic, and two **S2 true-color median** previews. The backend calls GEE `getThumbURL`, then **downloads the PNG and returns `data:image/png;base64,…` fields** so the browser is not limited by very long GEE URLs (the **baseline** graph is larger and used to break `img` `src` in the page). Uncheck to skip extra GEE work. Previews are skipped for AOIs over ~2500 km².
 
 ## Project layout
 
