@@ -1,0 +1,137 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.6rem 1.25rem;
+  padding: 0.6rem 0.85rem;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  font-size: 0.88rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.field input[type="date"],
+.field input[type="text"],
+.field input[type="number"] {
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.2rem 0.45rem;
+  min-width: 7.5rem;
+}
+
+.field input[type="checkbox"] {
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.hint {
+  max-width: 32rem;
+  color: #8b949e;
+  font-size: 0.8rem;
+}
+
+button {
+  padding: 0.35rem 0.7rem;
+  background: #238636;
+  color: #fff;
+  border: 1px solid #2ea043;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: #21262d;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+#map {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.status,
+.legend {
+  padding: 0.2rem 0.85rem;
+  background: #0d1117;
+  font-size: 0.8rem;
+  color: #8b949e;
+  border-top: 1px solid #30363d;
+}
+
+.error {
+  color: #f85149;
+  white-space: pre-wrap;
+}
+.maprow {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  position: relative;
+}
+
+.drawing-help {
+  position: absolute;
+  z-index: 1;
+  left: 8px;
+  top: 8px;
+  background: rgba(13, 17, 23, 0.88);
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.75rem;
+  color: #8b949e;
+  pointer-events: none;
+  max-width: 14rem;
+}
+
+.result-meta {
+  font-size: 0.78rem;
+  color: #7ee787;
+}
+
+h1 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0;
+  color: #f0f6fc;
+}
+
+h2 {
+  font-size: 0.78rem;
+  margin: 0.3rem 0 0.2rem 0;
+  color: #8b949e;
+  font-weight: 600;
+}
+
+.field-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 0.8rem;
+}
+
+a {
+  color: #58a6ff;
+}
